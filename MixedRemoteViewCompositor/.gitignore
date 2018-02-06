@@ -13,6 +13,7 @@ Samples/**/Unity/*.sln
 Source/ipch/
 Source/**/*.obj
 Source/**/*_i.c
+Source/**/*_p.h
 Source/**/*_p.c
 Source/**/*.winmd
 Source/**/MixedRemoteViewCompositor.h

@@ -15,16 +15,16 @@ import "Windows.Storage.idl";
 import "Windows.Storage.Streams.idl";
 
 // Additional imports to ensure that all required headers are included
-cpp_quote("#if defined(__cplusplus)")
-cpp_quote("}")
-cpp_quote("#endif // defined(__cplusplus)")
 cpp_quote("#include <Windows.Foundation.h>")
 cpp_quote("#if !defined(__windows2Enetworking2Esockets_h__)")
 cpp_quote("#include <Windows.Networking.Sockets.h>")
 cpp_quote("#endif // !defined(__windows2Enetworking2Esockets_h__)")
-cpp_quote("#if defined(__cplusplus)")
-cpp_quote("extern \"C\" {")
-cpp_quote("#endif // defined(__cplusplus)")
+
+cpp_quote("#ifdef __cplusplus")
+cpp_quote("#if !defined(__windows2Enetworking2Esockets_h__)")
+cpp_quote("#include <mfapi.h>")
+cpp_quote("#endif")
+cpp_quote("#endif //__cplusplus")
 
 namespace MixedRemoteViewCompositor
 {
@@ -59,7 +59,6 @@ namespace MixedRemoteViewCompositor
     typedef struct MFCameraIntrinsic_PinholeCameraModel MFCameraIntrinsic_PinholeCameraModel;
     typedef struct MFCameraIntrinsic_DistortionModel MFCameraIntrinsic_DistortionModel;
     typedef struct MFPinholeCameraIntrinsic_IntrinsicModel MFPinholeCameraIntrinsic_IntrinsicModel;
-    typedef struct MFPinholeCameraIntrinsics MFPinholeCameraIntrinsics;
 
     typedef struct PayloadHeader PayloadHeader;
     typedef struct MediaTypeDescription MediaTypeDescription;
@@ -87,7 +86,7 @@ namespace MixedRemoteViewCompositor { namespace Plugin {
     interface IDirectXManager;
 } }
 
-namespace MixedRemoteViewCompositor{ namespace Network {
+namespace MixedRemoteViewCompositor { namespace Network {
     delegate DisconnectedEventHandler;
     delegate BundleReceivedEventHandler;
     delegate ConnectedEventHandler;
@@ -267,13 +266,6 @@ namespace MixedRemoteViewCompositor {
     };
 
     [version(1.0)]
-    struct MFPinholeCameraIntrinsics
-    {
-        UINT32 count;
-        MFPinholeCameraIntrinsic_IntrinsicModel IntrinsicModels;
-    };
-
-    [version(1.0)]
     struct MediaSampleHeader
     {
         DWORD dwStreamId;
@@ -293,7 +285,7 @@ namespace MixedRemoteViewCompositor {
         Windows.Foundation.Numerics.Matrix4x4 worldToCameraMatrix;
         Windows.Foundation.Numerics.Matrix4x4 cameraProjectionTransform;
         Windows.Foundation.Numerics.Matrix4x4 cameraViewTransform;
-        MFPinholeCameraIntrinsics cameraIntrinsics;
+        MFPinholeCameraIntrinsic_IntrinsicModel cameraIntrinsics;
     };
 
     [version(1.0)]
@@ -410,7 +402,7 @@ namespace MixedRemoteViewCompositor { namespace Plugin {
 
 } }
 
-namespace MixedRemoteViewCompositor{ namespace Network {
+namespace MixedRemoteViewCompositor { namespace Network {
 
     declare
     {
@@ -730,7 +722,7 @@ namespace MixedRemoteViewCompositor{ namespace Network {
     };
 } }
 
-namespace MixedRemoteViewCompositor{ namespace Media {
+namespace MixedRemoteViewCompositor { namespace Media {
 
     [version(1.0)]
     enum SourceStreamState
