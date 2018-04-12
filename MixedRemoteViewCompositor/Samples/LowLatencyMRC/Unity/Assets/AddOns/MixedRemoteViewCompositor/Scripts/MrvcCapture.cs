@@ -3,7 +3,7 @@
 
 using System;
 using UnityEngine;
-using UnityEngine.VR.WSA;
+using UnityEngine.XR.WSA;
 
 namespace MixedRemoteViewCompositor
 {
@@ -87,10 +87,12 @@ namespace MixedRemoteViewCompositor
         {
             this.plugin = this.GetComponent<Plugin>();
 
+#if UNITY_UWP
             if(Plugin.IsHoloLens)
             {
                 this.spatialCoordinateSystemPtr = WorldManager.GetNativeISpatialCoordinateSystemPtr();
             }
+#endif
         }
 
         private void Start()
@@ -98,7 +100,8 @@ namespace MixedRemoteViewCompositor
             this.isStarted = true;
 
             // on HoloLens gets the instance of the spatial coordinate system, to be used in Mixed Media Rendering
-            if (Plugin.IsHoloLens)
+#if UNITY_UWP
+           if (Plugin.IsHoloLens)
             {
                 WorldManager.OnPositionalLocatorStateChanged += (oldState, newState) =>
                 {
@@ -111,6 +114,7 @@ namespace MixedRemoteViewCompositor
                     }
                 };
             }
+#endif
         }
 
         private void OnDisable()

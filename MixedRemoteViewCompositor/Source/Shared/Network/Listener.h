@@ -14,6 +14,7 @@ namespace MixedRemoteViewCompositor
             < RuntimeClassFlags<RuntimeClassType::WinRtClassicComMix>
             , Plugin::IModule
             , ABI::MixedRemoteViewCompositor::Network::IListener
+            , IConnectionReceivedEventHandler
             , IAsyncOperation<ABI::MixedRemoteViewCompositor::Network::Connection*>
             , AsyncBase<IAsyncOperationCompletedHandler<ABI::MixedRemoteViewCompositor::Network::Connection*>>
             , FtmBase >
@@ -53,10 +54,11 @@ namespace MixedRemoteViewCompositor
             virtual void OnClose(void);
             virtual void OnCancel(void);
 
+        protected:
             // ITypedEventHandler
-            IFACEMETHOD(OnConnectionReceived)(
-                _In_ IStreamSocketListener* sender,
-                _In_ IStreamSocketListenerConnectionReceivedEventArgs* args);
+            IFACEMETHOD(Invoke)(
+                _In_ ABI::Windows::Networking::Sockets::IStreamSocketListener* sender,
+                _In_ ABI::Windows::Networking::Sockets::IStreamSocketListenerConnectionReceivedEventArgs* args);
 
         private:
             STDMETHODIMP_(void) CloseInternal();

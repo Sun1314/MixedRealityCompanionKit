@@ -4,6 +4,7 @@
 #pragma once
 
 #include "pch.h"
+#include "Logger.h"
 
 #ifndef FAST_FAIL_ON_ERRORS
 #define FAST_FAIL_ON_ERRORS 0
@@ -119,23 +120,42 @@ inline void __stdcall Log(
         return;
     }
 
+    wchar_t wszTime[MAX_PATH];
+    GetTimeFormatEx(nullptr, 0, nullptr, L"hh':'mm':'ss tt - ", wszTime, _countof(wszTime));
+
     wchar_t szTextBuf[2048];
 
     va_list args;
     va_start(args, pszFormat);
 
-    StringCchVPrintf(szTextBuf, _countof(szTextBuf), pszFormat, args);
+    StringCchVPrintfW(szTextBuf, _countof(szTextBuf), pszFormat, args);
 
     va_end(args);
 
-    OutputDebugStringW(szTextBuf);
+    StringCchCatW(wszTime, _countof(wszTime), szTextBuf);
+
+    HRESULT hr = S_OK;
+    Microsoft::WRL::ComPtr<ILogger> spLogger(LoggerImpl::Instance());
+    if (spLogger != nullptr)
+    {
+        hr = spLogger->Log(Microsoft::WRL::Wrappers::HStringReference(wszTime).Get());
+    }
+    else
+    {
+        hr = E_FAIL;
+    }
+
+    if (FAILED(hr))
+    {
+        OutputDebugStringW(wszTime);
+    }
 }
 
 #define FORMAT_MESSAGE_ALLOCATE_BUFFER 0x00000100
 
 inline const TCHAR * ErrorMessage(HRESULT hr)
 {
-    TCHAR * pszMsg;
+    TCHAR * pszMsg = nullptr;
 
     FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
         FORMAT_MESSAGE_FROM_SYSTEM |
@@ -146,11 +166,11 @@ inline const TCHAR * ErrorMessage(HRESULT hr)
         (LPTSTR)&pszMsg,
         0,
         NULL);
-    if (pszMsg != NULL) {
+    if (pszMsg != nullptr) {
 #ifdef UNICODE
         size_t const nLen = wcslen(pszMsg);
 #else
-        size_t const nLen = strlen(m_pszMsg);
+        size_t const nLen = strlen(pszMsg);
 #endif
         if (nLen > 1 && pszMsg[nLen - 1] == '\n') {
             pszMsg[nLen - 1] = 0;
@@ -187,14 +207,24 @@ inline void __stdcall LogResult(
     }
 
     // Gets the plain text error message
-    Log(
-        Log_Level_Warning,
-        L"%sHR: 0x%x - %s\r\n\t%s(%d): %s\n"
-        , message, hr, ErrorMessage(hr), pszFile, nLine, pszFunc);
+    if (SUCCEEDED(hr))
+    {
+        Log(
+            Log_Level_Info,
+            L"%s\n\t%s(%d): %s\n"
+            , message, pszFile, nLine, pszFunc);
+    }
+    else
+    {
+        Log(
+            Log_Level_Warning,
+            L"%sHR: 0x%x - %s\n\t%s(%d): %s\n"
+            , message, hr, ErrorMessage(hr), pszFile, nLine, pszFunc);
 
-#if FAST_FAIL_ON_ERRORS
-    FastFail(hr);
-#endif
+        #if FAST_FAIL_ON_ERRORS
+                FastFail(hr);
+        #endif
+    }
 }
 
 // #define LOG_RESULT_MSG(hr, message, ...)

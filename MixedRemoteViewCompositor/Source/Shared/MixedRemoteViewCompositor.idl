@@ -68,7 +68,8 @@ namespace MixedRemoteViewCompositor
 }
 
 // forward declares
-namespace MixedRemoteViewCompositor { namespace Plugin {
+namespace MixedRemoteViewCompositor.Plugin 
+{
     typedef enum DeviceType DeviceType;
     typedef enum PluginEventType PluginEventType;
 
@@ -84,9 +85,10 @@ namespace MixedRemoteViewCompositor { namespace Plugin {
     runtimeclass PluginManager;
 
     interface IDirectXManager;
-} }
+}
 
-namespace MixedRemoteViewCompositor { namespace Network {
+namespace MixedRemoteViewCompositor.Network 
+{
     delegate DisconnectedEventHandler;
     delegate BundleReceivedEventHandler;
     delegate ConnectedEventHandler;
@@ -121,9 +123,10 @@ namespace MixedRemoteViewCompositor { namespace Network {
     interface IListener;
     interface IListenerStatics;
     runtimeclass Listener;
-} }
+}
 
-namespace MixedRemoteViewCompositor { namespace Media {
+namespace MixedRemoteViewCompositor.Media 
+{
     typedef enum SourceStreamState SourceStreamState;
     typedef enum SinkStreamState SinkStreamState;
     typedef enum SinkStreamOperation SinkStreamOperation;
@@ -166,10 +169,11 @@ namespace MixedRemoteViewCompositor { namespace Media {
     interface ICaptureEngine;
     interface ICaptureEngineStatics;
     runtimeclass CaptureEngine;
-} }
+}
 
 // interface defines
-namespace MixedRemoteViewCompositor {
+namespace MixedRemoteViewCompositor 
+{
 
     // enums
     [version(1.0)]
@@ -298,7 +302,8 @@ namespace MixedRemoteViewCompositor {
 
 }
 
-namespace MixedRemoteViewCompositor { namespace Plugin {
+namespace MixedRemoteViewCompositor.Plugin 
+{
 
     [version(1.0)]
     enum DeviceType
@@ -400,9 +405,10 @@ namespace MixedRemoteViewCompositor { namespace Plugin {
     {
     };
 
-} }
+}
 
-namespace MixedRemoteViewCompositor { namespace Network {
+namespace MixedRemoteViewCompositor.Network 
+{
 
     declare
     {
@@ -720,9 +726,10 @@ namespace MixedRemoteViewCompositor { namespace Network {
         interface MixedRemoteViewCompositor.Plugin.IModule;
         interface Windows.Foundation.IClosable;
     };
-} }
+}
 
-namespace MixedRemoteViewCompositor { namespace Media {
+namespace MixedRemoteViewCompositor.Media 
+{
 
     [version(1.0)]
     enum SourceStreamState
@@ -1115,4 +1122,4 @@ namespace MixedRemoteViewCompositor { namespace Media {
         interface MixedRemoteViewCompositor.Plugin.IModule;
     };
 
-} }
+}

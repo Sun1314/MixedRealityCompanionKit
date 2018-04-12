@@ -8,8 +8,6 @@ namespace MixedRemoteViewCompositor
     namespace Media 
     {
 
-        typedef std::unordered_set<UINT64> ResolutionList;
-
         class CaptureEngineImpl
             : public RuntimeClass
             < RuntimeClassFlags<RuntimeClassType::WinRtClassicComMix>
@@ -76,8 +74,6 @@ namespace MixedRemoteViewCompositor
             boolean _videoEffectAdded;
             boolean _audioEffectAdded;
             boolean _captureStarted;
-
-            ResolutionList _videoResolutions;
 
             ComPtr<ABI::Windows::Media::Capture::IMediaCapture> _mediaCapture;
             EventRegistrationToken _failedEventToken;

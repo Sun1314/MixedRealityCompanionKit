@@ -10,6 +10,75 @@
 #include <functional>
 #include "ErrorHandling.h"
 
+
+MIDL_INTERFACE("b3172bed-c2e0-4a18-a262-5809db9d26be")
+IAsyncActionCompleted : IUnknown
+{
+    IFACEMETHOD_(void, Completed)(HRESULT hr) = 0;
+};
+
+class AsyncCompleteImpl
+    : public RuntimeClass
+    < RuntimeClassFlags<WinRtClassicComMix>
+    , CloakedIid<IAsyncActionCompleted>
+    , IAsyncAction
+    , AsyncBase<IAsyncActionCompletedHandler>
+    , Microsoft::WRL::FtmBase >
+{
+    InspectableClass(L"Windows.Foundation.IAsyncAction", BaseTrust);
+
+public:
+    AsyncCompleteImpl()
+    {
+    }
+
+    ~AsyncCompleteImpl()
+    {
+        Completed(E_UNEXPECTED);
+    }
+
+    HRESULT RuntimeClassInitialize()
+    {
+        return AsyncBase::Start();
+    }
+
+    // IAsyncAction
+    IFACEMETHOD(put_Completed)(
+        _In_ ABI::Windows::Foundation::IAsyncActionCompletedHandler *handler) override
+    {
+        return PutOnComplete(handler);
+    }
+
+    IFACEMETHOD(get_Completed)(
+        _Out_ ABI::Windows::Foundation::IAsyncActionCompletedHandler** handler) override
+    {
+        return GetOnComplete(handler);
+    }
+
+    IFACEMETHOD(GetResults)(void) override
+    {
+        return AsyncBase::CheckValidStateForResultsCall();
+    }
+
+    // AsyncBase
+    virtual HRESULT OnStart(void) { return S_OK; }
+    virtual void OnClose(void) {};
+    virtual void OnCancel(void) {};
+
+    // InitCompleteImpl
+    IFACEMETHOD_(void, Completed)(HRESULT hr) override
+    {
+        Log(Log_Level_Info, L"InitCompleteImpl::SignalCompleted()\n");
+
+        if (FAILED(hr))
+        {
+            AsyncBase::TryTransitionToError(hr);
+        }
+
+        AsyncBase::FireCompletion();
+    }
+};
+
 // T: Type of the parent object
 template<class T>
 class AsyncCallback
@@ -107,7 +176,7 @@ class AsyncEventDelegate
 {
 public:
     AsyncEventDelegate()
-        : _completedEvent(CreateEventEx(nullptr, nullptr, 0, EVENT_ALL_ACCESS))
+        : _completedEvent(CreateEventEx(nullptr, nullptr, CREATE_EVENT_MANUAL_RESET, WRITE_OWNER | EVENT_ALL_ACCESS))
     {
         ComPtr<AsyncEventDelegate> spThis(this);
         auto lambda = ([this, spThis](_In_ HRESULT hr, _In_ TOperation* pOperation)

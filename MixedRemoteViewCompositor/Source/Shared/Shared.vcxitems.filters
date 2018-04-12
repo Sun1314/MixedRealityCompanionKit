@@ -118,6 +118,9 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)Media\SchemeHandler.h">
       <Filter>Media</Filter>
     </ClInclude>
+    <ClInclude Include="$(MSBuildThisFileDirectory)Common\Logger.h">
+      <Filter>Common</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)MixedRemoteViewCompositor.def" />
@@ -190,6 +193,9 @@
     </ClCompile>
     <ClCompile Include="$(MSBuildThisFileDirectory)Media\SchemeHandler.cpp">
       <Filter>Media</Filter>
+    </ClCompile>
+    <ClCompile Include="$(MSBuildThisFileDirectory)Common\Logger.cpp">
+      <Filter>Common</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

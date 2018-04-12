@@ -25,16 +25,9 @@ inline HRESULT PrepareRemoteUrl(
 
     UINT32 length = 0;
     WCHAR pszUri[MAX_PATH];
-    if (spHostNameType == HostNameType::HostNameType_Ipv4 || spHostNameType == HostNameType::HostNameType_DomainName)
-    {
-        IFR(StringCchPrintf(pszUri, _countof(pszUri), L"%s://%s", c_szNetworkScheme, rawName.GetRawBuffer(&length)));
-    }
-    else if (spHostNameType == HostNameType::HostNameType_Ipv6)
-    {
-        IFR(StringCchPrintf(pszUri, _countof(pszUri), L"%s://[%s]", c_szNetworkScheme, rawName.GetRawBuffer(&length)));
-    }
+    IFR(StringCchPrintf(pszUri, _countof(pszUri), L"%s://%s", c_szNetworkScheme, rawName.GetRawBuffer(&length)));
 
-    length = std::wcslen(pszUri);
+    length = static_cast<UINT32>(std::wcslen(pszUri));
 
     Microsoft::WRL::Wrappers::HString uriHString;
     IFR(WindowsCreateString(pszUri, length, uriHString.GetAddressOf()));
@@ -256,7 +249,7 @@ HRESULT ConnectionImpl::SendPayloadType(
 
     // send an PayloadType header, contains no payload.
     ComPtr<IDataBuffer> dataBuffer;
-    IFR(MakeAndInitialize<DataBufferImpl>(&dataBuffer, sizeof(PayloadHeader)));
+    IFR(MakeAndInitialize<DataBufferImpl>(&dataBuffer, static_cast<DWORD>(sizeof(PayloadHeader))));
 
     ComPtr<IDataBundle> dataBundle;
     IFR(MakeAndInitialize<DataBundleImpl>(&dataBundle));
@@ -318,7 +311,7 @@ HRESULT ConnectionImpl::SendBundle(
         ComPtr<IStreamWriteOperation> writeOperation;
         IFR(spOutputStream->WriteAsync(rawBuffer.Get(), &writeOperation));
 
-        HRESULT hr = SyncWait<UINT32, UINT32>(writeOperation.Get(), 1);
+        HRESULT hr = SyncWait<UINT32, UINT32>(writeOperation.Get(), 500);
         IFR(hr);
     }
 
@@ -451,7 +444,7 @@ HRESULT ConnectionImpl::WaitForHeader()
 
     if (nullptr == _spHeaderBuffer)
     {
-        IFR(MakeAndInitialize<DataBufferImpl>(&_spHeaderBuffer, sizeof(PayloadHeader)));
+        IFR(MakeAndInitialize<DataBufferImpl>(&_spHeaderBuffer, static_cast<DWORD>(sizeof(PayloadHeader))));
     }
 
     ComPtr<IMFMediaBuffer> spMediaBuffer;

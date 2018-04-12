@@ -82,7 +82,7 @@ HRESULT ListenerImpl::ListenAsync(
     ComPtr<IAsyncOperation<Connection*>> spThis(this);
     NULL_CHK_HR(spThis.Get(), E_POINTER);
 
-    IFR(spThis.CopyTo(operation));
+    *operation = spThis.Detach();
 
     return Start();
 }
@@ -113,7 +113,7 @@ HRESULT ListenerImpl::remove_Closed(EventRegistrationToken token)
 }
 
 _Use_decl_annotations_
-HRESULT ListenerImpl::OnConnectionReceived(
+HRESULT ListenerImpl::Invoke(
     IStreamSocketListener *sender,
     IStreamSocketListenerConnectionReceivedEventArgs *args)
 {
@@ -144,6 +144,8 @@ _Use_decl_annotations_
 HRESULT ListenerImpl::put_Completed(
     ABI::Windows::Foundation::IAsyncOperationCompletedHandler<Connection*> *handler)
 {
+    auto lock = _lock.Lock();
+
     return PutOnComplete(handler);
 }
 
@@ -151,6 +153,8 @@ _Use_decl_annotations_
 HRESULT ListenerImpl::get_Completed(
     ABI::Windows::Foundation::IAsyncOperationCompletedHandler<Connection*>** handler)
 {
+    auto lock = _lock.Lock();
+
     return GetOnComplete(handler);
 }
 
@@ -167,43 +171,40 @@ HRESULT ListenerImpl::GetResults(
 
     NULL_CHK_HR(spConnection, E_OUTOFMEMORY);
 
-    spConnection.CopyTo(ppConnection);
+    *ppConnection = spConnection.Detach();
 
-    return Close();
+    return S_OK;
 }
 
 _Use_decl_annotations_
 HRESULT ListenerImpl::OnStart(void)
 {
+    auto lock = _lock.Lock();
+
     Log(Log_Level_Info, L"ListenerImpl::OnStart()\n");
 
     // convert port to string
     std::wstring wsPort = to_wstring(_port);
 
     // create a listener
-    ComPtr<ABI::Windows::Networking::Sockets::IStreamSocketListener> socketListener;
+    ComPtr<IStreamSocketListener> socketListener;
     IFR(Windows::Foundation::ActivateInstance(
         Wrappers::HStringReference(RuntimeClass_Windows_Networking_Sockets_StreamSocketListener).Get(), 
         &socketListener));
 
-    // define callback for any connections
-    auto receivedFn = std::bind(&ListenerImpl::OnConnectionReceived, this, std::placeholders::_1, std::placeholders::_2);
-
-    auto connectionReceivedCallback = Callback<IConnectionReceivedEventHandler>(receivedFn);
-
     // register for callbacks
-    IFR(socketListener->add_ConnectionReceived(connectionReceivedCallback.Get(), &_connectionReceivedEventToken));
+    IFR(socketListener->add_ConnectionReceived(this, &_connectionReceivedEventToken));
 
     // setup bindAsync
-    ComPtr<IAsyncAction> bindOperation;
+    ComPtr<IAsyncAction> bindAsync;
     IFR(socketListener->BindServiceNameAsync(
         Wrappers::HStringReference(wsPort.data()).Get(),
-        &bindOperation));
+        &bindAsync));
 
     // setup callback and start
     ComPtr<ListenerImpl> spThis(this);
     return StartAsyncThen(
-        bindOperation.Get(),
+        bindAsync.Get(),
         [this, spThis, socketListener](_In_ HRESULT hr, _In_ IAsyncAction* pAsyncResult, _In_ AsyncStatus asyncStatus) -> HRESULT
     {
         auto lock = _lock.Lock();
@@ -217,6 +218,7 @@ HRESULT ListenerImpl::OnStart(void)
         if (FAILED(hr))
         {
             TryTransitionToError(hr);
+
             return FireCompletion();
         }
 
@@ -227,12 +229,16 @@ HRESULT ListenerImpl::OnStart(void)
 _Use_decl_annotations_
 void ListenerImpl::OnClose(void)
 {
+    auto lock = _lock.Lock();
+
     CloseInternal();
 }
 
 _Use_decl_annotations_
 void ListenerImpl::OnCancel(void)
 {
+    auto lock = _lock.Lock();
+
     CloseInternal();
 }
 

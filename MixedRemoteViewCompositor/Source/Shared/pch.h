@@ -18,11 +18,14 @@
 #include <future>
 
 // Windows
+#include <windows.h>
+#include <assert.h>
+#include <strsafe.h>
+
 #include <initguid.h>
 #include <wrl.h>
 #include <wrl\async.h>
 #include <wrl\wrappers\corewrappers.h>
-#include <strsafe.h>
 #include <windows.foundation.h>
 #include <windows.foundation.collections.h>
 #include <windows.foundation.numerics.h>

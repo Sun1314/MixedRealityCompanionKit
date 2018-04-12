@@ -397,7 +397,7 @@ HRESULT PluginManagerImpl::ConnectorCreateAndStart(
 
     // convert to Uri
     Microsoft::WRL::Wrappers::HString uriHString;
-    IFR(WindowsCreateString(wsUri.c_str(), wsUri.size(), uriHString.GetAddressOf()));
+    IFR(WindowsCreateString(wsUri.c_str(), static_cast<UINT32>(wsUri.size()), uriHString.GetAddressOf()));
 
     ComPtr<ABI::Windows::Foundation::IUriRuntimeClass> uri;
     IFR(uriFactory->CreateUri(uriHString.Get(), &uri));

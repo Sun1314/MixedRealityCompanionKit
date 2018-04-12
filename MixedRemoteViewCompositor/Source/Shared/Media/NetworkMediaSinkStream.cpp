@@ -985,7 +985,7 @@ HRESULT NetworkMediaSinkStreamImpl::PrepareSample(
 
     // create a buffer for the media sample header
     ComPtr<IDataBuffer> spDataBuffer;
-    IFR(MakeAndInitialize<DataBufferImpl>(&spDataBuffer, c_cbSampleHeaderSize));
+    IFR(MakeAndInitialize<DataBufferImpl>(&spDataBuffer, static_cast<DWORD>(c_cbSampleHeaderSize)));
 
     // Prepare the buffer
     ComPtr<IBuffer> spHeaderBuffer;

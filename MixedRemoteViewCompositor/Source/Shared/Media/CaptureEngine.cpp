@@ -8,105 +8,6 @@ ActivatableStaticOnlyFactory(CaptureEngineStaticsImpl);
 
 typedef IAsyncOperationCompletedHandler<HSTRING*> IDeviceInformationOperationCompletedHandler;
 
-inline HRESULT FindResolutionsFromMediaProperties(
-    _In_ IVectorView<ABI::Windows::Media::MediaProperties::IMediaEncodingProperties*>* propertiesList,
-    _Out_ ResolutionList *resolutionList) throw()
-{
-    NULL_CHK(propertiesList);
-    NULL_CHK(resolutionList);
-
-    UINT32 uSize = 0;
-    IFR(propertiesList->get_Size(&uSize));
-    for (UINT32 uIndex = 0; uIndex < uSize; uIndex++)
-    {
-        ComPtr<IMediaEncodingProperties> spProperties;
-        ComPtr<IVideoEncodingProperties> spVideoProperties;
-        ComPtr<IImageEncodingProperties> spImageProperties;
-        UINT32 uWidth = 0;
-        UINT32 uHeight = 0;
-        UINT64 uint64PackedResolution;
-
-        IFR(propertiesList->GetAt(uIndex, &spProperties));
-        if (SUCCEEDED(spProperties.As(&spVideoProperties)))
-        {
-            IFR(spVideoProperties->get_Width(&uWidth));
-            IFR(spVideoProperties->get_Height(&uHeight));
-        }
-        else if (SUCCEEDED(spProperties.As(&spImageProperties)))
-        {
-            IFR(spImageProperties->get_Width(&uWidth));
-            IFR(spImageProperties->get_Height(&uHeight));
-        }
-        else
-        {
-            IFR(E_UNEXPECTED);
-        }
-
-        // Pack the width and height into an uint64
-        uint64PackedResolution = Pack2UINT32AsUINT64(uWidth, uHeight);
-
-        // If we haven't seen this resolution yet, add it to our resolution list
-        ResolutionList::iterator itResolutionList;
-        itResolutionList = resolutionList->find(uint64PackedResolution);
-        if (itResolutionList == resolutionList->end())
-        {
-            auto success = resolutionList->emplace(uint64PackedResolution).second;
-            IFR(success ? S_OK : E_OUTOFMEMORY);
-            Log(Log_Level_Info, L"Resolution: %d x %d", uWidth, uHeight);
-        }
-    }
-
-    return S_OK;
-}
-
-inline HRESULT FindFrameRateRangeFromMediaProperties(
-    _In_ IVectorView<ABI::Windows::Media::MediaProperties::IMediaEncodingProperties*>* propertiesList,
-    _Out_ UINT32* puMin,
-    _Out_ UINT32* puMax) throw()
-{
-    NULL_CHK(propertiesList);
-    NULL_CHK(puMin);
-    NULL_CHK(puMax);
-
-    UINT32 uSize = 0;
-    IFR(propertiesList->get_Size(&uSize));
-    if (uSize > 0)
-    {
-        UINT32 uMax = 0;
-        for (UINT32 i = 0; i < uSize; ++i)
-        {
-            ComPtr<IMediaEncodingProperties> spProperties;
-            IFR(propertiesList->GetAt(i, &spProperties));
-
-            // Must be video properties
-            ComPtr<IVideoEncodingProperties> spVideoProperties;
-            IFR(spProperties.As(&spVideoProperties));
-
-            ComPtr<IMediaRatio> spFrameRate;
-            IFR(spVideoProperties->get_FrameRate(&spFrameRate));
-
-            UINT32 uFrameRateNum = 0;
-            IFR(spFrameRate->get_Numerator(&uFrameRateNum));
-            UINT32 uFrameRateDenom = 0;
-            IFR(spFrameRate->get_Denominator(&uFrameRateDenom));
-            if (uFrameRateDenom > 0)
-            {
-                uFrameRateNum /= uFrameRateDenom;
-            }
-
-            if (uFrameRateNum > uMax)
-            {
-                uMax = uFrameRateNum;
-            }
-        }
-
-       * puMin = 1;
-       * puMax = uMax;
-    }
-
-    return S_OK;
-}
-
 inline HRESULT FindDeviceId(_In_ DeviceClass deviceClass, _Out_ HSTRING* deviceId)
 {
     ComPtr<ABI::Windows::Devices::Enumeration::IDeviceInformationStatics> spDeviceInformationStatics;
@@ -118,7 +19,7 @@ inline HRESULT FindDeviceId(_In_ DeviceClass deviceClass, _Out_ HSTRING* deviceI
     IFR(spDeviceInformationStatics->FindAllAsyncDeviceClass(deviceClass, &spAsyncOperation));
 
     // waiting until find all completes
-    IFR(SyncWait<DeviceInformationCollection*>(spAsyncOperation.Get(), 1000));
+    IFR(SyncWait<DeviceInformationCollection*>(spAsyncOperation.Get()));
 
     // get the list as an enumerable type
     ComPtr<IVectorView<DeviceInformation*>> devices;
@@ -201,6 +102,8 @@ _Use_decl_annotations_
 HRESULT CaptureEngineImpl::Close(void)
 {
     Log(Log_Level_Info, L"CaptureEngineImpl::Close()\n");
+
+    auto lock = _lock.Lock();
 
     if (nullptr == _mediaCapture)
     {
@@ -312,71 +215,137 @@ HRESULT CaptureEngineImpl::InitAsync(
 
     _enableAudio = enableAudio;
 
-    ComPtr<CaptureEngineImpl> spThis(this);
-    auto workItem =
-        Microsoft::WRL::Callback<ABI::Windows::System::Threading::IWorkItemHandler>(
-            [this, spThis](IAsyncAction* asyncAction) -> HRESULT
+    // create callback
+    Wrappers::HString videoDeviceId, audioDeviceId;
+
+    IFR(FindDeviceId(
+        ABI::Windows::Devices::Enumeration::DeviceClass::DeviceClass_VideoCapture,
+        videoDeviceId.GetAddressOf()));
+
+    if (_enableAudio)
     {
-        Wrappers::HString videoDeviceId, audioDeviceId;
-
         IFR(FindDeviceId(
-            ABI::Windows::Devices::Enumeration::DeviceClass::DeviceClass_VideoCapture,
-            videoDeviceId.GetAddressOf()));
+            ABI::Windows::Devices::Enumeration::DeviceClass::DeviceClass_AudioCapture,
+            audioDeviceId.GetAddressOf()));
+    }
 
-        if (_enableAudio)
+    // InitializationSetting
+    Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCaptureInitializationSettings> initSettings;
+    IFR(Windows::Foundation::ActivateInstance(
+        Wrappers::HStringReference(RuntimeClass_Windows_Media_Capture_MediaCaptureInitializationSettings).Get(),
+        &initSettings));
+    IFR(initSettings->put_VideoDeviceId(videoDeviceId.Get()));
+    IFR(initSettings->put_AudioDeviceId(_enableAudio ? audioDeviceId.Get() : nullptr));
+    IFR(initSettings->put_StreamingCaptureMode(_enableAudio ? StreamingCaptureMode::StreamingCaptureMode_AudioAndVideo : StreamingCaptureMode::StreamingCaptureMode_Video));
+    IFR(initSettings->put_PhotoCaptureSource(PhotoCaptureSource::PhotoCaptureSource_VideoPreview));
+
+    Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCaptureInitializationSettings2> initSettings2;
+    IFR(initSettings.As(&initSettings2));
+    IFR(initSettings2->put_MediaCategory(ABI::Windows::Media::Capture::MediaCategory::MediaCategory_Communications));
+
+    Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCaptureInitializationSettings4> initSettings4;
+    IFR(initSettings2.As(&initSettings4));
+
+    // find the closest profile
+    ComPtr<IMediaCaptureStatics> spCaptureStatics;
+    IFR(Windows::Foundation::GetActivationFactory(
+        HStringReference(RuntimeClass_Windows_Media_Capture_MediaCapture).Get(),
+        &spCaptureStatics));
+
+    ComPtr<IVectorView<MediaCaptureVideoProfile*>> spVideoProfiles;
+    IFR(spCaptureStatics->FindAllVideoProfiles(videoDeviceId.Get(), &spVideoProfiles));
+
+    UINT32 numProfiles = 0;
+    IFR(spVideoProfiles->get_Size(&numProfiles));
+
+    bool captureProfileFound = false;
+    for (UINT32 j = 0; j < numProfiles; ++j)
+    {
+        ComPtr<IMediaCaptureVideoProfile> spProfile;
+        IFR(spVideoProfiles->GetAt(j, &spProfile));
+
+        ComPtr<IVectorView<MediaCaptureVideoProfileMediaDescription*>> spMediaDescription;
+        IFR(spProfile->get_SupportedRecordMediaDescription(&spMediaDescription));
+
+        UINT numTypes = 0;
+        IFR(spMediaDescription->get_Size(&numTypes));
+        for (UINT32 i = 0; i < numTypes; i++)
         {
-            IFR(FindDeviceId(
-                ABI::Windows::Devices::Enumeration::DeviceClass::DeviceClass_AudioCapture,
-                audioDeviceId.GetAddressOf()));
+            if (!captureProfileFound)
+            {
+                ComPtr<IMediaCaptureVideoProfileMediaDescription> spMediaDesc;
+                IFR(spMediaDescription->GetAt(i, spMediaDesc.ReleaseAndGetAddressOf()));
+
+                double frameRate;
+                IFR(spMediaDesc->get_FrameRate(&frameRate));
+
+                UINT32 width;
+                IFR(spMediaDesc->get_Width(&width));
+
+                UINT32 height;
+                IFR(spMediaDesc->get_Height(&height));
+
+                if (width >= 1280 && height >= 720 && round(frameRate) == 30)
+                {
+                    IFR(initSettings4->put_PreviewMediaDescription(spMediaDesc.Get()));
+                    IFR(initSettings4->put_RecordMediaDescription(spMediaDesc.Get()));
+                    IFR(initSettings4->put_VideoProfile(spProfile.Get()));
+                    captureProfileFound = true;
+                }
+            }
         }
+    }
 
-        // InitializationSetting
-        Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCaptureInitializationSettings> initSettings;
-        IFR(Windows::Foundation::ActivateInstance(
-            Wrappers::HStringReference(RuntimeClass_Windows_Media_Capture_MediaCaptureInitializationSettings).Get(),
-            &initSettings));
-        IFR(initSettings->put_VideoDeviceId(videoDeviceId.Get()));
-        IFR(initSettings->put_AudioDeviceId(_enableAudio ? audioDeviceId.Get() : nullptr));
-        IFR(initSettings->put_StreamingCaptureMode(_enableAudio ? StreamingCaptureMode::StreamingCaptureMode_AudioAndVideo : StreamingCaptureMode::StreamingCaptureMode_Video));
+    // IMediaCapture activation
+    Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCapture> mediaCapture;
+    IFR(Windows::Foundation::ActivateInstance(
+        Wrappers::HStringReference(RuntimeClass_Windows_Media_Capture_MediaCapture).Get(),
+        &mediaCapture));
 
-        Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCaptureInitializationSettings2> initSettings2;
-        IFR(initSettings.As(&initSettings2));
-        IFR(initSettings2->put_MediaCategory(ABI::Windows::Media::Capture::MediaCategory::MediaCategory_Communications));
+    // initialize mediaCapture
+    ComPtr<IAsyncAction> initAsync;
+    IFR(mediaCapture->InitializeWithSettingsAsync(initSettings.Get(), &initAsync));
 
-        // IMediaCapture activation
-        Microsoft::WRL::ComPtr<ABI::Windows::Media::Capture::IMediaCapture> mediaCapture;
-        IFR(Windows::Foundation::ActivateInstance(
-            Wrappers::HStringReference(RuntimeClass_Windows_Media_Capture_MediaCapture).Get(),
-            &mediaCapture));
+    ComPtr<IAsyncActionCompleted> spInitAction;
+    IFR(MakeAndInitialize<AsyncCompleteImpl>(&spInitAction));
 
-        // initialize mediaCapture
-        ComPtr<IAsyncAction> initAsync;
-        IFR(mediaCapture->InitializeWithSettingsAsync(initSettings.Get(), &initAsync));
-        IFR(SyncWait<void>(initAsync.Get()));
+    auto initHandler = Callback<IAsyncActionCompletedHandler>(
+        [this, mediaCapture, spInitAction](IAsyncAction* asyncOp, AsyncStatus status) -> HRESULT
+    {
+        assert(status == AsyncStatus::Completed);
+
+        HRESULT hr = S_OK;
 
         // set controller hints
         ComPtr<ABI::Windows::Media::Devices::IVideoDeviceController> videoDeviceController;
-        IFR(mediaCapture->get_VideoDeviceController(&videoDeviceController));
+        ComPtr<ABI::Windows::Media::Devices::IAdvancedVideoCaptureDeviceController4> advVideoController4;
+        ComPtr<ABI::Windows::Media::Devices::IMediaDeviceController> mediaDeviceController;
+        ComPtr<IVectorView<ABI::Windows::Media::MediaProperties::IMediaEncodingProperties*>> encProperties;
+
+        IFC(mediaCapture->get_VideoDeviceController(&videoDeviceController));
 
         // lower latency over quality
-        ComPtr<ABI::Windows::Media::Devices::IAdvancedVideoCaptureDeviceController4> advVideoController4;
-        IFR(videoDeviceController.As(&advVideoController4));
-        IFR(advVideoController4->put_DesiredOptimization(ABI::Windows::Media::Devices::MediaCaptureOptimization::MediaCaptureOptimization_LatencyThenQuality));
+        IFC(videoDeviceController.As(&advVideoController4));
+        IFC(advVideoController4->put_DesiredOptimization(ABI::Windows::Media::Devices::MediaCaptureOptimization::MediaCaptureOptimization_LatencyThenQuality));
 
         // device control to get resolutions
-        ComPtr<ABI::Windows::Media::Devices::IMediaDeviceController> mediaDeviceController;
-        IFR(videoDeviceController.As(&mediaDeviceController));
+        IFC(videoDeviceController.As(&mediaDeviceController));
 
         // get list of source resolutionss
-        ComPtr<IVectorView<ABI::Windows::Media::MediaProperties::IMediaEncodingProperties*>> encProperties;
-        IFR(mediaDeviceController->GetAvailableMediaStreamProperties(MediaStreamType::MediaStreamType_VideoRecord, &encProperties));
-        IFR(FindResolutionsFromMediaProperties(encProperties.Get(), &_videoResolutions));
+        IFC(mediaDeviceController->GetAvailableMediaStreamProperties(MediaStreamType::MediaStreamType_VideoRecord, &encProperties));
 
         // store the capture engine and return
-        return (mediaCapture.As(&_mediaCapture));
+        IFC(mediaCapture.As(&_mediaCapture));
+
+    done:
+        spInitAction->Completed(hr);
+
+        return S_OK;
     });
 
-    return PluginManagerStaticsImpl::GetThreadPool()->RunAsync(workItem.Get(), action);
+    IFR(initAsync->put_Completed(initHandler.Get()));
+
+    return spInitAction.CopyTo(action);
 }
 
 _Use_decl_annotations_
@@ -387,170 +356,191 @@ HRESULT CaptureEngineImpl::StartAsync(
 {
     NULL_CHK(connection);
 
-    ComPtr<ICaptureEngine> spThis(this);
     ComPtr<IConnection> spConnection(connection);
-    auto workItem = Callback<ABI::Windows::System::Threading::IWorkItemHandler>(
-        [this, spThis, spConnection, enableMrc](IAsyncAction* asyncAction) -> HRESULT
+
+    // get the video properties for the capture  
+    ComPtr<Devices::IVideoDeviceController> spVideoController;
+    IFR(_mediaCapture->get_VideoDeviceController(&spVideoController));
+
+    ComPtr<Devices::IMediaDeviceController> spMediaController;
+    IFR(spVideoController.As(&spMediaController));
+
+    ComPtr<IMediaEncodingProperties> spEncProperties;
+    IFR(spMediaController->GetMediaStreamProperties(Capture::MediaStreamType::MediaStreamType_VideoRecord, &spEncProperties));
+
+    ComPtr<IVideoEncodingProperties> spVideoProperties;
+    IFR(spEncProperties.As(&spVideoProperties));
+
+    UINT32 width;
+    IFR(spVideoProperties->get_Width(&width));
+
+    UINT32 height;
+    IFR(spVideoProperties->get_Height(&height));
+
+    // encoding profile activation
+    ComPtr<IMediaEncodingProfileStatics> spEncodingProfileStatics;
+    IFR(Windows::Foundation::GetActivationFactory(
+        Wrappers::HStringReference(RuntimeClass_Windows_Media_MediaProperties_MediaEncodingProfile).Get(),
+        &spEncodingProfileStatics));
+
+    ComPtr<IMediaEncodingProfile> mediaEncodingProfile;
+    IFR(spEncodingProfileStatics->CreateMp4(
+        ABI::Windows::Media::MediaProperties::VideoEncodingQuality_HD720p,
+        &mediaEncodingProfile));
+
+    // remove unwanted parts of the profile
+    if (!_enableAudio)
     {
-        // encoding profile activation
-        ComPtr<IMediaEncodingProfileStatics> spEncodingProfileStatics;
-        IFR(Windows::Foundation::GetActivationFactory(
-            Wrappers::HStringReference(RuntimeClass_Windows_Media_MediaProperties_MediaEncodingProfile).Get(),
-            &spEncodingProfileStatics));
+        mediaEncodingProfile->put_Audio(nullptr);
+    }
+    mediaEncodingProfile->put_Container(nullptr);
 
-        ComPtr<IMediaEncodingProfile> mediaEncodingProfile;
-        IFR(spEncodingProfileStatics->CreateMp4(
-            ABI::Windows::Media::MediaProperties::VideoEncodingQuality_HD720p,
-            &mediaEncodingProfile));
+    // match the capture video width/height
+    ComPtr<IVideoEncodingProperties> spVideoEncodingProperties;
+    IFR(mediaEncodingProfile->get_Video(&spVideoEncodingProperties));
+    IFR(spVideoEncodingProperties->put_Width(width));
+    IFR(spVideoEncodingProperties->put_Height(height));
 
-        // remove unwanted parts of the profile
-        if (!_enableAudio)
+    ComPtr<IAudioEncodingProperties> spAudioEncodingProperties;
+    IFR(mediaEncodingProfile->get_Audio(&spAudioEncodingProperties));
+
+    // create the custome sink
+    ComPtr<NetworkMediaSinkImpl> networkSink;
+    IFR(Microsoft::WRL::Details::MakeAndInitialize<NetworkMediaSinkImpl>(
+        &networkSink,
+        spAudioEncodingProperties.Get(),
+        spVideoEncodingProperties.Get(),
+        spConnection.Get()));
+
+    // if we want MRC, enable that now
+    if (enableMrc)
+    {
+        ComPtr<IMediaCapture4> spMediaCapture4;
+        IFR(_mediaCapture.As(&spMediaCapture4));
+
+        ComPtr<MixedRemoteViewCompositor::Media::MrcVideoEffectDefinitionImpl> mrcVideoEffectDefinition;
+        IFR(MakeAndInitialize<MrcVideoEffectDefinitionImpl>(&mrcVideoEffectDefinition));
+
+        // set properties
+        IFR(mrcVideoEffectDefinition->put_StreamType(Capture::MediaStreamType::MediaStreamType_VideoRecord));
+        IFR(mrcVideoEffectDefinition->put_HologramComposition(true));
+        IFR(mrcVideoEffectDefinition->put_VideoStabilization(false));
+        IFR(mrcVideoEffectDefinition->put_GlobalOpacityCoefficient(.9f));
+        IFR(mrcVideoEffectDefinition->put_RecordingIndicatorEnabled(true));
+
+        ComPtr<ABI::Windows::Media::Effects::IVideoEffectDefinition> videoEffectDefinition;
+        IFR(mrcVideoEffectDefinition.As(&videoEffectDefinition));
+
+        ComPtr<IAsyncOperation<IMediaExtension*>> asyncAddEffect;
+        IFR(spMediaCapture4->AddVideoEffectAsync(videoEffectDefinition.Get(), Capture::MediaStreamType::MediaStreamType_VideoRecord, &asyncAddEffect));
+        IFR(SyncWait<IMediaExtension*>(asyncAddEffect.Get()));
+
+        ComPtr<IMediaExtension> mediaExtension;
+        IFR(asyncAddEffect->GetResults(&mediaExtension));
+
+        _videoEffectAdded = true;
+
+        if (_enableAudio)
         {
-            mediaEncodingProfile->put_Audio(nullptr);
-        }
-        mediaEncodingProfile->put_Container(nullptr);
+            ComPtr<MixedRemoteViewCompositor::Media::MrcAudioEffectDefinitionImpl> mrcAudioEffectDefinition;
+            MakeAndInitialize<MrcAudioEffectDefinitionImpl>(&mrcAudioEffectDefinition);
 
-        // get the audio/video profiles
-        ComPtr<IAudioEncodingProperties> audioEncodingProperties;
-        IFR(mediaEncodingProfile->get_Audio(&audioEncodingProperties));
+            IFR(mrcAudioEffectDefinition->put_MixerMode(AudioMixerMode_Mic));
 
-        ComPtr<IVideoEncodingProperties> videoEncodingProperties;
-        IFR(mediaEncodingProfile->get_Video(&videoEncodingProperties));
+            ComPtr<ABI::Windows::Media::Effects::IAudioEffectDefinition> audioEffectDefinition;
+            IFR(mrcAudioEffectDefinition.As(&audioEffectDefinition));
+            IFR(spMediaCapture4->AddAudioEffectAsync(audioEffectDefinition.Get(), &asyncAddEffect));
 
-        // create the custome sink
-        ComPtr<NetworkMediaSinkImpl> networkSink;
-        IFR(Microsoft::WRL::Details::MakeAndInitialize<NetworkMediaSinkImpl>(
-            &networkSink,
-            audioEncodingProperties.Get(),
-            videoEncodingProperties.Get(),
-            spConnection.Get()));
-
-        // if we want MRC, enable that now
-        if (enableMrc)
-        {
-            ComPtr<IMediaCapture4> spMediaCapture4;
-            IFR(_mediaCapture.As(&spMediaCapture4));
-
-            ComPtr<MixedRemoteViewCompositor::Media::MrcVideoEffectDefinitionImpl> mrcVideoEffectDefinition;
-            IFR(MakeAndInitialize<MrcVideoEffectDefinitionImpl>(&mrcVideoEffectDefinition));
-
-            // set properties
-            IFR(mrcVideoEffectDefinition->put_StreamType(MediaStreamType_VideoRecord));
-            IFR(mrcVideoEffectDefinition->put_HologramComposition(true));
-            IFR(mrcVideoEffectDefinition->put_VideoStabilization(false));
-            IFR(mrcVideoEffectDefinition->put_GlobalOpacityCoefficient(.9f));
-            IFR(mrcVideoEffectDefinition->put_RecordingIndicatorEnabled(true));
-
-            ComPtr<ABI::Windows::Media::Effects::IVideoEffectDefinition> videoEffectDefinition;
-            IFR(mrcVideoEffectDefinition.As(&videoEffectDefinition));
-
-            ComPtr<IAsyncOperation<IMediaExtension*>> asyncAddEffect;
-            IFR(spMediaCapture4->AddVideoEffectAsync(videoEffectDefinition.Get(), MediaStreamType_VideoRecord, &asyncAddEffect));
-            IFR(SyncWait<IMediaExtension*>(asyncAddEffect.Get()));
+            IFR(SyncWait<IMediaExtension*>(asyncAddEffect.Get(), 500));
 
             ComPtr<IMediaExtension> mediaExtension;
             IFR(asyncAddEffect->GetResults(&mediaExtension));
 
-            _videoEffectAdded = true;
-
-            if (_enableAudio)
-            {
-                ComPtr<MixedRemoteViewCompositor::Media::MrcAudioEffectDefinitionImpl> mrcAudioEffectDefinition;
-                MakeAndInitialize<MrcAudioEffectDefinitionImpl>(&mrcAudioEffectDefinition);
-
-                IFR(mrcAudioEffectDefinition->put_MixerMode(AudioMixerMode_Mic));
-
-                ComPtr<ABI::Windows::Media::Effects::IAudioEffectDefinition> audioEffectDefinition;
-                IFR(mrcAudioEffectDefinition.As(&audioEffectDefinition));
-                IFR(spMediaCapture4->AddAudioEffectAsync(audioEffectDefinition.Get(), &asyncAddEffect));
-
-                IFR(SyncWait<IMediaExtension*>(asyncAddEffect.Get(), 1000));
-
-                ComPtr<IMediaExtension> mediaExtension;
-                IFR(asyncAddEffect->GetResults(&mediaExtension));
-
-                _audioEffectAdded = true;
-            }
-
-            _enableMrc = enableMrc;
+            _audioEffectAdded = true;
         }
 
-        // StartRecordToCustomSinkAsync
-        ComPtr<IMediaExtension> spMediaExtension;
-        IFR(networkSink.As(&spMediaExtension));
+        _enableMrc = enableMrc;
+    }
 
-        // subscribe to events
-        auto failedEventCallback =
-            Callback<ABI::Windows::Media::Capture::IMediaCaptureFailedEventHandler, CaptureEngineImpl>(this, &CaptureEngineImpl::OnMediaCaptureFailed);
-        EventRegistrationToken failedToken;
-        IFR(_mediaCapture->add_Failed(failedEventCallback.Get(), &failedToken));
+    // StartRecordToCustomSinkAsync
+    ComPtr<IMediaExtension> spMediaExtension;
+    IFR(networkSink.As(&spMediaExtension));
 
-        auto recordLimiteExceededEventCallback =
-            Callback<ABI::Windows::Media::Capture::IRecordLimitationExceededEventHandler, CaptureEngineImpl>(this, &CaptureEngineImpl::OnRecordLimitationExceeded);
-        EventRegistrationToken recordLimitExceededToken;
-        IFR(_mediaCapture->add_RecordLimitationExceeded(recordLimiteExceededEventCallback.Get(), &recordLimitExceededToken));
+    // subscribe to events
+    auto failedEventCallback =
+        Callback<ABI::Windows::Media::Capture::IMediaCaptureFailedEventHandler, CaptureEngineImpl>(this, &CaptureEngineImpl::OnMediaCaptureFailed);
+    EventRegistrationToken failedToken;
+    IFR(_mediaCapture->add_Failed(failedEventCallback.Get(), &failedToken));
 
-        auto startRecordAsync = Callback<IAsyncActionCompletedHandler>(
-            [this, spThis, networkSink](_In_ IAsyncAction *asyncResult, _In_ AsyncStatus asyncStatus) -> HRESULT
-        {
-            _captureStarted = true;
+    auto recordLimiteExceededEventCallback =
+        Callback<ABI::Windows::Media::Capture::IRecordLimitationExceededEventHandler, CaptureEngineImpl>(this, &CaptureEngineImpl::OnRecordLimitationExceeded);
+    EventRegistrationToken recordLimitExceededToken;
+    IFR(_mediaCapture->add_RecordLimitationExceeded(recordLimiteExceededEventCallback.Get(), &recordLimitExceededToken));
 
-            _networkMediaSink = networkSink;
+    ComPtr<IAsyncActionCompleted> spInitAction;
+    IFR(MakeAndInitialize<AsyncCompleteImpl>(&spInitAction));
 
-            _networkMediaSink->put_SpatialCoordinateSystem(_spSpatialCoordinateSystem.Get());
+    auto startRecordAsync = Callback<IAsyncActionCompletedHandler>(
+        [this, networkSink, spInitAction](_In_ IAsyncAction *asyncResult, _In_ AsyncStatus asyncStatus) -> HRESULT
+    {
+        _captureStarted = true;
 
-            return S_OK;
-        });
+        _networkMediaSink = networkSink;
 
-        ComPtr<IAsyncAction> spStartRecordOperation;
-        IFR(_mediaCapture->StartRecordToCustomSinkAsync(mediaEncodingProfile.Get(), spMediaExtension.Get(), &spStartRecordOperation));
-        IFR(spStartRecordOperation->put_Completed(startRecordAsync.Get()));
+        _networkMediaSink->put_SpatialCoordinateSystem(_spSpatialCoordinateSystem.Get());
 
-        _failedEventToken = failedToken;
-        _recordLimitExceededEventToken = recordLimitExceededToken;
+        spInitAction->Completed(S_OK);
 
         return S_OK;
     });
 
-    return PluginManagerStaticsImpl::GetThreadPool()->RunAsync(std::move(workItem).Get(), action);
+    ComPtr<IAsyncAction> spStartRecordOperation;
+    IFR(_mediaCapture->StartRecordToCustomSinkAsync(mediaEncodingProfile.Get(), spMediaExtension.Get(), &spStartRecordOperation));
+    IFR(spStartRecordOperation->put_Completed(startRecordAsync.Get()));
+
+    _failedEventToken = failedToken;
+    _recordLimitExceededEventToken = recordLimitExceededToken;
+    
+    return spInitAction.CopyTo(action);
 }
 
 _Use_decl_annotations_
 HRESULT CaptureEngineImpl::StopAsync(
     IAsyncAction** action)
 {
+    auto lock = _lock.Lock();
+
     if (!_captureStarted)
     {
         return S_OK;
     }
 
+    ComPtr<IAsyncActionCompleted> spInitAction;
+    IFR(MakeAndInitialize<AsyncCompleteImpl>(&spInitAction));
+
     ComPtr<CaptureEngineImpl> spThis(this);
-    auto workItem = Callback<ABI::Windows::System::Threading::IWorkItemHandler>(
-        [this, spThis](IAsyncAction* asyncAction) -> HRESULT
+    auto stopAsyncCB = Callback<IAsyncActionCompletedHandler>(
+        [this,spThis, spInitAction](_In_ IAsyncAction *asyncResult, _In_ AsyncStatus c) -> HRESULT
     {
-        auto stopAsyncCB = Callback<IAsyncActionCompletedHandler>(
-            [this, spThis](_In_ IAsyncAction *asyncResult, _In_ AsyncStatus asyncStatus) -> HRESULT
-        {
-            auto lock = _lock.Lock();
-
-            return Close();
-        });
-
         auto lock = _lock.Lock();
 
-        if (nullptr != _mediaCapture)
-        {
-            ComPtr<IAsyncAction> spStopAsync;
-            if SUCCEEDED(_mediaCapture->StopRecordAsync(&spStopAsync))
-            {
-                LOG_RESULT(spStopAsync->put_Completed(stopAsyncCB.Get()));
-            }
-        }
+        HRESULT hr = Close();
+
+        spInitAction->Completed(hr);
 
         return S_OK;
     });
 
-    return PluginManagerStaticsImpl::GetThreadPool()->RunAsync(workItem.Get(), action);
+    if (nullptr != _mediaCapture)
+    {
+        ComPtr<IAsyncAction> spStopAsync;
+        if SUCCEEDED(_mediaCapture->StopRecordAsync(&spStopAsync))
+        {
+            LOG_RESULT(spStopAsync->put_Completed(stopAsyncCB.Get()));
+        }
+    }
+
+    return spInitAction.CopyTo(action);
 }
 
 _Use_decl_annotations_

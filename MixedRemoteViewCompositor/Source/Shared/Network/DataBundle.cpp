@@ -59,7 +59,7 @@ HRESULT DataBundleImpl::get_BufferCount(
 {
     NULL_CHK(count);
 
-    *count = _buffers.size();
+    *count = static_cast<UINT32>(_buffers.size());
 
     return S_OK;
 }
